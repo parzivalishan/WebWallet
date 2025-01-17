@@ -6,7 +6,10 @@
     <title>Web3 Wallet</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/qrcode.min.js"></script>
-    <style>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@gh-pages/qrcode.min.js"></script>
+   
+   <style>
         /* SpaceX Black Color Theme */
         :root {
             --primary-bg: #000000; /* SpaceX Black */
@@ -233,8 +236,8 @@
         }
          .qr-code {
            margin-top: 10px;
-            width: 200px;
-             height: 200px;
+            width: 300px;
+             height: 300px;
         }
        /* Custom Scrollbar */
        ::-webkit-scrollbar {
@@ -506,22 +509,43 @@
       const blockscoutApiUrls = {
             'optimism': 'https://optimism-sepolia.blockscout.com/api/v2',
       }
+    let qrcode; // Declare qrcode in a higher scope
+
+   try{
+      qrcode = new QRCode("qr-code", {
+         colorDark: "#ffffff",
+           colorLight: "#2d2d2d",
+          correctLevel: QRCode.CorrectLevel.H
+        });
+    }catch(error){
+      console.error("Failed to initialize QR Code:", error);
+     alert("Failed to initialize QR code library");
+    }
+
 
          async function initializeProvider() {
             try {
-               provider = new ethers.JsonRpcProvider(networkEndpoints[currentNetwork]);
-                 await updateGasPrice();
-               setInterval(updateGasPrice, 15000);
-           } catch (error) {
-                 console.error('Failed to initialize provider:', error);
+                provider = new ethers.JsonRpcProvider(networkEndpoints[currentNetwork]);
+                await updateGasPrice();
+                setInterval(updateGasPrice, 15000);
+            } catch (error) {
+                console.error('Failed to initialize provider:', error);
+                alert('Failed to initialize provider. See console for details.');
             }
-         }
+        }
+
         async function updateGasPrice() {
-           try {
+           if(!provider){
+             console.error("Provider not initialized");
+             document.getElementById('gas-price').textContent = 'Error loading gas price';
+             return;
+           }
+            try {
                 const gasPrice = await provider.getGasPrice();
                 const gasPriceGwei = ethers.formatUnits(gasPrice, "gwei");
                 document.getElementById('gas-price').textContent = `${parseFloat(gasPriceGwei).toFixed(2)} Gwei`;
            } catch (error) {
+                 console.error('Error updating gas price:', error);
                 document.getElementById('gas-price').textContent = 'Error loading gas price';
             }
         }
@@ -546,41 +570,52 @@
          }
          async function connectWallet() {
              const errorMessageDiv = document.getElementById('error-message');
+            errorMessageDiv.classList.add('hidden');
              try {
-                errorMessageDiv.classList.add('hidden');
                  if (!provider) {
-                     await initializeProvider();
-                 }
-                 const privateKey = document.querySelector('#private-input input').value.trim();
+                    await initializeProvider();
+                    if(!provider) throw new Error("Provider was not properly initialized");
+                }
+                const privateKey = document.querySelector('#private-input input').value.trim();
                 if (!privateKey) throw new Error('Please enter a private key');
                 const walletData = { type: 'private', value: privateKey };
                 setCookie('walletData', JSON.stringify(walletData), 30);
-                 wallet = new ethers.Wallet(privateKey, provider);
+                wallet = new ethers.Wallet(privateKey, provider);
                 document.getElementById('login-modal').style.display = "none";
-                 document.getElementById('wallet-section').classList.remove('hidden');
-                  const address = await wallet.getAddress();
+                document.getElementById('wallet-section').classList.remove('hidden');
+                const address = await wallet.getAddress();
                 document.getElementById('wallet-address').textContent = address;
                  await updateWalletInfo();
-                await loadTransactions();
+                 await loadTransactions();
                  await loadAllTokenBalances();
-             }
+            }
              catch (error) {
+                console.error('Error connecting wallet:', error);
                  errorMessageDiv.textContent = 'Error connecting wallet: ' + error.message;
                 errorMessageDiv.classList.remove('hidden');
-           }
-         }
+            }
+        }
          async function updateWalletInfo() {
+             if(!wallet){
+               console.error("Wallet is not properly initialized");
+               return;
+             }
              try {
                 const balance = await provider.getBalance(wallet.address);
-                const balanceInEth = ethers.formatEther(balance);
-                 document.getElementById('wallet-balance').textContent = `${parseFloat(balanceInEth).toFixed(4)} ETH`;
-               document.getElementById('eth-balance').textContent = parseFloat(balanceInEth).toFixed(4);
-             }
-             catch (error) {
-                 console.error('Error updating wallet info:', error);
+                 const balanceInEth = ethers.formatEther(balance);
+                document.getElementById('wallet-balance').textContent = `${parseFloat(balanceInEth).toFixed(4)} ETH`;
+                 document.getElementById('eth-balance').textContent = parseFloat(balanceInEth).toFixed(4);
             }
-         }
+            catch (error) {
+                console.error('Error updating wallet info:', error);
+            }
+        }
           async function loadTransactions() {
+            if(!wallet){
+                console.error("Wallet is not properly initialized");
+                document.getElementById('transaction-list').innerHTML = '<div class="transaction" style="color: red;">Wallet not initialized.</div>';
+                return;
+              }
             try {
                 const address = await wallet.getAddress();
                 const apiUrl = `${blockscoutApiUrls[currentNetwork]}/address/${address}/transactions?items=5`;
@@ -588,20 +623,18 @@
                 const data = await response.json();
 
                 if (!data || !data.items) {
-                    console.error("Failed to fetch transactions from Blockscout API", data);
-                     document.getElementById('transaction-list').innerHTML = '<div class="transaction" style="color: red;">Failed to load transactions.</div>';
-
+                   console.error("Failed to fetch transactions from Blockscout API", data);
+                    document.getElementById('transaction-list').innerHTML = '<div class="transaction" style="color: red;">Failed to load transactions.</div>';
                     return;
                 }
 
-                const transactionsHTML = data.items.map(tx => {
-                  const timestamp = new Date(tx.timestamp * 1000).toLocaleString();
-
+               const transactionsHTML = data.items.map(tx => {
+                   const timestamp = new Date(tx.timestamp * 1000).toLocaleString();
                     return `
                         <div class="transaction">
                             <div>${tx.hash.slice(0, 6)}...${tx.hash.slice(-4)}</div>
                             <div>${tx.from === address ? 'Sent' : 'Received'}</div>
-                           <div>${ethers.formatEther(tx.value)} ETH</div>
+                            <div>${ethers.formatEther(tx.value)} ETH</div>
                             <div class="transaction-details">
                                 <div>Block: ${tx.block_number}</div>
                               <div>Timestamp: ${timestamp}</div>
@@ -610,232 +643,229 @@
                            </div>
                         </div>
                     `;
-                }).join('');
+               }).join('');
 
                 document.getElementById('transaction-list').innerHTML = transactionsHTML;
-
-                data.items.forEach(tx => {
-                   const txHashLinkDiv = document.getElementById(`transaction-${tx.hash}`);
-                  if (txHashLinkDiv) {
+               data.items.forEach(tx => {
+                    const txHashLinkDiv = document.getElementById(`transaction-${tx.hash}`);
+                   if (txHashLinkDiv) {
                        txHashLinkDiv.innerHTML = `<a href="${explorerUrls[currentNetwork]}${tx.hash}" target="_blank" onclick="showTransactionDetails('${tx.hash}')">View on Explorer</a>`;
-                    }
-               });
-
+                   }
+                });
             } catch (error) {
                 console.error('Error loading transactions:', error);
                 document.getElementById('transaction-list').innerHTML = '<div class="transaction" style="color: red;">Failed to load transactions.</div>';
             }
         }
        async function loadAllTokenBalances() {
-    try {
-        const address = await wallet.getAddress();
-        const apiUrl = `${blockscoutApiUrls[currentNetwork]}/address/${address}/tokens?items=10`;
-        const response = await fetch(apiUrl);
-        const data = await response.json();
-
-           if (!data || !data.items) {
-                console.error("Failed to fetch token balances from Blockscout API", data);
-            return;
-        }
-
-          const tokenListDiv = document.querySelector('.token-list');
-         tokenListDiv.innerHTML = `<h3>Tokens</h3>
-             <div class="token-item">
-                <span>ETH</span>
-                 <span id="eth-balance">0.00</span>
-             </div>`;
-          for (const token of data.items) {
-              if(token.contract.name == "Ether"){
-                 continue;
+            if(!wallet){
+                 console.error("Wallet is not properly initialized");
+                 return;
               }
-            try {
-                 const formattedBalance = parseFloat(ethers.formatUnits(token.balance, token.contract.decimals)).toFixed(4);
-                  tokenListDiv.innerHTML += `
-                <div class="token-item">
-                 <span>${token.contract.symbol || token.contract_address.slice(0, 6) + "..." + token.contract_address.slice(-4)}</span>
-                    <span>${formattedBalance}</span>
-                  </div>`;
-            } catch (error) {
-                console.error('Error fetching token info:', token.contract_address, error);
-            }
+        try {
+            const address = await wallet.getAddress();
+            const apiUrl = `${blockscoutApiUrls[currentNetwork]}/address/${address}/tokens?items=10`;
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+             if (!data || !data.items) {
+                 console.error("Failed to fetch token balances from Blockscout API", data);
+               return;
+           }
+
+           const tokenListDiv = document.querySelector('.token-list');
+            tokenListDiv.innerHTML = `<h3>Tokens</h3>
+               <div class="token-item">
+                  <span>ETH</span>
+                  <span id="eth-balance">0.00</span>
+               </div>`;
+           for (const token of data.items) {
+              if(token.contract.name === "Ether"){
+                  continue;
+              }
+               try {
+                   const formattedBalance = parseFloat(ethers.formatUnits(token.balance, token.contract.decimals)).toFixed(4);
+                     tokenListDiv.innerHTML += `
+                   <div class="token-item">
+                      <span>${token.contract.symbol || token.contract_address.slice(0, 6) + "..." + token.contract_address.slice(-4)}</span>
+                       <span>${formattedBalance}</span>
+                   </div>`;
+                } catch (error) {
+                   console.error('Error fetching token info:', token.contract_address, error);
+                }
+           }
+        } catch (error) {
+            console.error("Failed to load all tokens:", error);
         }
-    } catch (error) {
-        console.error("Failed to load all tokens:", error);
     }
-}
           // Modal functions
         function showSendModal() {
-           closeAllModals();
+            closeAllModals();
              document.getElementById('sendModal').style.display = 'flex';
          }
          function showReceiveModal() {
-           closeAllModals();
-           document.getElementById('receiveModal').style.display = 'flex';
+             closeAllModals();
+             document.getElementById('receiveModal').style.display = 'flex';
              const walletAddress = document.getElementById('wallet-address').textContent;
-            document.getElementById('receive-address-display').textContent = walletAddress;
-            generateQRCode(walletAddress);
+            if(walletAddress){
+              document.getElementById('receive-address-display').textContent = walletAddress;
+               generateQRCode(walletAddress);
+            }else{
+               console.error("Wallet address is not loaded properly");
+               alert("Wallet address could not be loaded")
+            }
          }
         function showTransactionDetails(txHash) {
              closeAllModals();
-            document.getElementById('transactionModal').style.display = 'flex';
-             const message = `Transaction Hash: <br> <a href="${explorerUrls[currentNetwork]}${txHash}" target="_blank">${txHash}</a>`;
-            document.getElementById('transaction-message').innerHTML = message;
+             document.getElementById('transactionModal').style.display = 'flex';
+            const message = `Transaction Hash: <br> <a href="${explorerUrls[currentNetwork]}${txHash}" target="_blank">${txHash}</a>`;
+           document.getElementById('transaction-message').innerHTML = message;
          }
-        function generateQRCode(address) {
-            const qrCodeDiv = document.getElementById('qr-code');
-             qrCodeDiv.innerHTML = '';
-            try{
-               new QRCode(qrCodeDiv, {
-                     text: address,
-                     width: 128,
-                     height: 128,
-                     colorDark: "#ffffff",
-                     colorLight: "#2d2d2d",
-                     correctLevel: QRCode.CorrectLevel.H
-                });
-            }catch(error){
-                 console.error("Failed to generate qr code : ", error)
+       function generateQRCode(address) {
+        if(!qrcode){
+             console.error("QR code library was not initialized properly");
+            return;
+        }
+          try{
+            qrcode.makeCode(address);
+           }catch(error){
+               console.error("Failed to generate qr code : ", error);
+               alert("Failed to generate QR code");
            }
-         }
+        }
           function closeModal(modalId) {
              document.getElementById(modalId).style.display = 'none';
          }
          function closeAllModals() {
            const modals = document.querySelectorAll('.modal');
             modals.forEach(modal => modal.style.display = 'none');
-       }
-         function copyAddress() {
-           const address = document.getElementById('receive-address-display').textContent;
-           navigator.clipboard.writeText(address).then(() => {
-               alert('Address copied to clipboard!');
+        }
+        function copyAddress() {
+            const address = document.getElementById('receive-address-display').textContent;
+           if(!address) {
+               console.error("Address is not available to copy");
+               alert("Could not copy address")
+               return;
+           }
+            navigator.clipboard.writeText(address).then(() => {
+                alert('Address copied to clipboard!');
             }, (err) => {
-                 console.error('Could not copy text: ', err);
+               console.error('Could not copy text: ', err);
                alert('Failed to copy address.');
            });
-         }
+        }
         function toggleTokenInput() {
            const sendType = document.getElementById('sendType').value;
             const tokenContractGroup = document.getElementById('tokenContractGroup');
              tokenContractGroup.style.display = sendType === 'token' ? 'block' : 'none';
-         }
-        function showConfirmationModal() {
-            closeAllModals();
-            document.getElementById('confirmationModal').style.display = 'flex';
+        }
+       function showConfirmationModal() {
+           closeAllModals();
+           document.getElementById('confirmationModal').style.display = 'flex';
         }
         function closeConfirmationModal() {
-             document.getElementById('confirmationModal').style.display = 'none';
-         }
-         let transactionTimeout;
-         let cancelClicked = false;
+            document.getElementById('confirmationModal').style.display = 'none';
+        }
+        let transactionTimeout;
+       let cancelClicked = false;
+
         function startTransactionWithDelay(transactionFunction) {
             const loadingOverlay = document.getElementById('loading-overlay');
             loadingOverlay.style.display = 'flex';
-           const cancelButton = document.getElementById('cancelTransactionButton');
+            const cancelButton = document.getElementById('cancelTransactionButton');
             cancelButton.style.display = 'inline-block';
-           cancelClicked = false;
+            cancelClicked = false;
             transactionTimeout = setTimeout(async () => {
-               if (!cancelClicked) {
+                if (!cancelClicked) {
                      await transactionFunction();
-                 }
-                 loadingOverlay.style.display = 'none';
+               }
+                loadingOverlay.style.display = 'none';
                 cancelButton.style.display = 'none';
-             }, 5000);
-         }
-       async function sendTransaction() {
+            }, 5000);
+        }
+        async function sendTransaction() {
             const sendType = document.getElementById('sendType').value;
             const recipientAddress = document.getElementById('recipientAddress').value;
-             const amount = document.getElementById('amount').value;
-           let tokenContractAddress = null;
-
-            // Validate recipient address
+            const amount = document.getElementById('amount').value;
+            let tokenContractAddress = null;
             if (!ethers.isAddress(recipientAddress)) {
-               alert('Invalid recipient address.');
-               return;
-            }
-
-           // Validate amount
-            if (isNaN(amount) || parseFloat(amount) <= 0) {
-                alert('Invalid amount.');
+                 alert('Invalid recipient address.');
                 return;
+            }
+           if (isNaN(amount) || parseFloat(amount) <= 0) {
+               alert('Invalid amount.');
+               return;
            }
-
-            // Validate token contract address if sending tokens
-            if (sendType === 'token') {
+           if (sendType === 'token') {
                 tokenContractAddress = document.getElementById('tokenContract').value;
-               if (!ethers.isAddress(tokenContractAddress)) {
-                    alert('Invalid token contract address.');
+                if (!ethers.isAddress(tokenContractAddress)) {
+                   alert('Invalid token contract address.');
                    return;
                 }
           }
-
            try {
-               const parsedAmount = ethers.parseEther(amount);
+                const parsedAmount = ethers.parseEther(amount);
                 let tx;
 
-                if (sendType === 'eth') {
-                     // Send ETH transaction
+                 if (sendType === 'eth') {
+                    // Send ETH transaction
                     tx = {
-                        to: recipientAddress,
-                         value: parsedAmount,
+                       to: recipientAddress,
+                        value: parsedAmount,
                    };
                    const transaction = await wallet.sendTransaction(tx);
-                  showTransactionModal(`Transaction sent! <br> Hash: <a href="${explorerUrls[currentNetwork]}${transaction.hash}" target="_blank">${transaction.hash.slice(0, 6)}...${transaction.hash.slice(-4)}</a>`);
+                    showTransactionModal(`Transaction sent! <br> Hash: <a href="${explorerUrls[currentNetwork]}${transaction.hash}" target="_blank">${transaction.hash.slice(0, 6)}...${transaction.hash.slice(-4)}</a>`);
                      loadTransactions();
                  } else {
                     // Send token transaction
-                    const tokenContract = new ethers.Contract(tokenContractAddress, [
+                   const tokenContract = new ethers.Contract(tokenContractAddress, [
                        "function transfer(address to, uint256 value) external returns (bool)"
-                  ], wallet);
-
-                  const transfer = await tokenContract.transfer(recipientAddress, parsedAmount);
+                    ], wallet);
+                   const transfer = await tokenContract.transfer(recipientAddress, parsedAmount);
                     await transfer.wait();
-
                     // Show transaction hash for token transfer
-                  showTransactionModal(`Token transferred! <br> Hash: <a href="${explorerUrls[currentNetwork]}${transfer.hash}" target="_blank">${transfer.hash.slice(0, 6)}...${transfer.hash.slice(-4)}</a>`);
+                   showTransactionModal(`Token transferred! <br> Hash: <a href="${explorerUrls[currentNetwork]}${transfer.hash}" target="_blank">${transfer.hash.slice(0, 6)}...${transfer.hash.slice(-4)}</a>`);
                      loadTransactions();
                 }
 
                 closeModal('sendModal');
             } catch (error) {
-                console.error('Error sending transaction:', error);
+               console.error('Error sending transaction:', error);
                  showTransactionModal(`Transaction failed: ${error.message}`);
-            }
+           }
         }
-
-         function showTransactionModal(message) {
+        function showTransactionModal(message) {
              document.getElementById('transaction-message').innerHTML = message;
             document.getElementById('transactionModal').style.display = 'flex';
         }
-        document.getElementById('confirmTransactionButton').addEventListener('click', async () => {
+       document.getElementById('confirmTransactionButton').addEventListener('click', async () => {
            const confirmationInput = document.getElementById('confirmationInput').value;
             if (confirmationInput.toLowerCase() === 'confirm') {
                closeConfirmationModal();
-               startTransactionWithDelay(sendTransaction);
-           } else {
-                 alert("Confirmation failed. Please type 'confirm' to proceed.");
-            }
-        });
-
-        function loadWalletFromCookie() {
+                startTransactionWithDelay(sendTransaction);
+            } else {
+                alert("Confirmation failed. Please type 'confirm' to proceed.");
+           }
+       });
+       function loadWalletFromCookie() {
              const walletDataCookie = getCookie('walletData');
              if (walletDataCookie) {
-                 try {
-                     const walletData = JSON.parse(walletDataCookie);
-                      if (walletData && walletData.type === 'private' && walletData.value) {
-                        document.querySelector('#private-input input').value = walletData.value;
-                          connectWallet();
-                          return;
-                     }
+               try {
+                    const walletData = JSON.parse(walletDataCookie);
+                     if (walletData && walletData.type === 'private' && walletData.value) {
+                       document.querySelector('#private-input input').value = walletData.value;
+                         connectWallet();
+                         return;
+                   }
                 } catch (error) {
-                     console.error("Error parsing wallet cookie:", error);
+                   console.error("Error parsing wallet cookie:", error);
                 }
-            }
+           }
            document.getElementById('login-modal').style.display="block";
             document.getElementById('wallet-section').classList.add('hidden');
-         }
-         // Initialize
-         initializeProvider();
-        loadWalletFromCookie();
+        }
+        // Initialize
+        initializeProvider();
+         loadWalletFromCookie();
    </script>
 </body>
 </html>
